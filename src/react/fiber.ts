@@ -98,8 +98,50 @@ class Fiber {
     return (currentFiber.nextEffect = fiber);
   }
 
+  // This process always begins at the root of the fiber tree
+  // The strategy is doing depth first search through child link
+  // If reach the leaf node, keep processing with sibling link
+  // When there is no sibling left, back off with return link
+  // A fiber is consider completed when all of its sub tree is completed
+
+  // In render phase, we will iterate through the whole tree but only work on fibers which
+  // are "dirty" (have work to do). When a fiber node is mark "dirty", all of its children will be marked as well
   processRenderPhase() {
-    console.log(`123123`, 123123);
+    console.log('Begin render phase');
+    this.beginWorkOnFiber(this, true);
+  }
+
+  // When we begin work on a Fiber, we should first check if there's any work to do
+  // If force = true, start the work regardless
+  beginWorkOnFiber(fiber: Fiber, force: boolean = false) {
+    console.log(`Work begin on fiber:`, fiber);
+
+    if (force || fiber.hasWorkToDo()) fiber.doWork();
+
+    let workInProgressChild = fiber.child;
+    while (workInProgressChild) {
+      workInProgressChild = fiber.beginWorkOnFiber(workInProgressChild, force);
+    }
+
+    // If there is no child left to work on, consider this fiber node as completed
+    return this.completeWorkOnFiber(fiber);
+  }
+
+  completeWorkOnFiber(fiber: Fiber) {
+    console.log(`Work completed on fiber:`, fiber);
+    return fiber.sibling;
+  }
+
+  hasWorkToDo() {
+    return this.updateQueue.length !== 0;
+  }
+
+  // In render phase, there are several work to do
+  // - getDerivedStateFromProps
+  // - shouldComponentUpdate
+  // - render
+  doWork() {
+    console.log('im doing work on:', this);
   }
 
   enqueueUpdate(changes: TinyReact.State) {

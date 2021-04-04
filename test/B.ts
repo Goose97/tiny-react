@@ -9,7 +9,6 @@ export class B extends TinyReact.Component {
   render() {
     let children = [
       TinyReact.createElement('span', {}, ['This is class component B']),
-      'This is a side note',
       TinyReact.createElement('p', {}, ['Well just another p tag']),
     ];
     if (this.props.id === 1)
