@@ -1,4 +1,5 @@
 import ClassComponent from './component';
+import UpdateScheduler from './update_scheduler';
 import TinyReact from './types';
 import { getComponentType } from '../shared/utils';
 
@@ -8,7 +9,7 @@ class Fiber {
   pendingProps: TinyReact.Props;
   memoizedProps: TinyReact.Props;
   memoizedState: TinyReact.State;
-  updateQueue: Array<Object>;
+  updateQueue: Array<TinyReact.State>;
   stateNode: TinyReact.Component | HTMLElement | null;
   childrenRenderer: (
     props?: TinyReact.Props,
@@ -38,7 +39,7 @@ class Fiber {
     // For a class component, it is the class instance.
     // For a tag name node, it is the corresponding html element
     // For a function component, it is null since a function component does not have local state
-    this.stateNode = this.getStateNode(element);
+    this.stateNode = this.createStateNode(element);
 
     this.memoizedState = this.isClassComponent(element)
       ? (this.stateNode as ClassComponent).state
@@ -55,11 +56,12 @@ class Fiber {
     this.childrenRenderer = this.getChildrenRenderer(element);
   }
 
-  private getStateNode(element: TinyReact.Element): Fiber['stateNode'] {
+  private createStateNode(element: TinyReact.Element): Fiber['stateNode'] {
     if (this.isClassComponent(element)) {
       //@ts-ignore
       const instance = new element.type();
       instance.props = this.pendingProps;
+      instance._internalFiber = this;
       return instance;
     }
 
@@ -94,6 +96,15 @@ class Fiber {
     let currentFiber = this.rootEffect;
     while (currentFiber.nextEffect) currentFiber = currentFiber.nextEffect;
     return (currentFiber.nextEffect = fiber);
+  }
+
+  processRenderPhase() {
+    console.log(`123123`, 123123);
+  }
+
+  enqueueUpdate(changes: TinyReact.State) {
+    this.updateQueue.push(changes);
+    UpdateScheduler.enqueueUpdate();
   }
 }
 
@@ -161,7 +172,7 @@ export const processEffects = (fiberRoot: Fiber) => {
 };
 
 export const processEffect = (fiber: Fiber, effect: Fiber['effectTag']) => {
-  console.log(`effect`, effect, fiber);
+  // console.log(`effect`, effect, fiber);
   if (typeof fiber.elementType === 'string') return;
   const componentType = getComponentType(fiber.elementType);
   if (componentType === 'function') return;

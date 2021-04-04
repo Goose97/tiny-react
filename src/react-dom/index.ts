@@ -1,3 +1,4 @@
+import UpdateScheduler from '../react/update_scheduler';
 import TinyReact from '../react/types';
 import Fiber, { createFiberTree, processEffects } from '../react/fiber';
 import { camelCase2KebabCase } from '../shared/utils';
@@ -8,6 +9,12 @@ export const render = (
 ) => {
   let fiberTree = createFiberTree(element);
   console.log(`fiberTree`, fiberTree);
+
+  // This callback will be invoke whenever a element in
+  // the tree invoke setState
+  UpdateScheduler.registerCallback(
+    fiberTree.processRenderPhase.bind(fiberTree),
+  );
 
   const domTree = createDOMFromFiber(fiberTree, fiberTree);
   console.log(`domTree`, domTree);
