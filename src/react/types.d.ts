@@ -22,7 +22,8 @@ declare namespace TinyReact {
 
   export type Element = {
     // Can be either string (span, div) or component (class or function)
-    type: TinyReact.TagName | Function;
+    // null is the text element
+    type: TinyReact.TagName | Function | null;
     props: Props;
     key: string | null;
     textContent?: string;

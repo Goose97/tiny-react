@@ -10,35 +10,29 @@ export class A extends TinyReact.Component {
     };
   }
 
-  componentDidMount() {
-    console.log('im in A');
-
-    setTimeout(() => {
-      this.setState({
-        bold: 'im bold content but changed',
-      });
-
-      this.setState({
-        italic: 'im italic content but changed',
-      });
-    }, 2000);
-  }
-
   render() {
     // @ts-ignore
     const { bold, italic } = this.state;
 
-    return TinyReact.createElement('div', { id: 'componentA' }, [
+    console.log('im in A render');
+
+    return TinyReact.createElement('div', { id: 'div sole children of A' }, [
       TinyReact.createElement(
         'span',
-        { className: 'inside-span', aNasNas: 2, b: 7 },
+        {
+          id: 'span children of componentA',
+          className: 'inside-span',
+          aNasNas: 2,
+          b: 7,
+        },
         [
-          TinyReact.createElement('b', {}, [bold]),
-          TinyReact.createElement('em', {}, [italic]),
+          TinyReact.createElement('b', { id: 'b tag' }, [bold]),
+          TinyReact.createElement('em', { id: 'em tag' }, [italic]),
+          'nothing tag',
         ],
       ),
-      TinyReact.createElement(B, { id: 1 }),
-      TinyReact.createElement(B, { id: 2 }),
+      TinyReact.createElement(B, { id: 'componentB' }),
+      // TinyReact.createElement(B, { id: 2 }),
     ]);
   }
 }

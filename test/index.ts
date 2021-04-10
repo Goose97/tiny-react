@@ -10,7 +10,7 @@ const simpleDivElement = TinyReact.createElement(
   },
   ['Thanh cong roi'],
 );
-const classComponent = TinyReact.createElement(A, {});
+const classComponent = TinyReact.createElement(A, {id: 'componentA'});
 
 const root = document.getElementById('container')!;
 

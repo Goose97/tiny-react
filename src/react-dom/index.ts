@@ -1,6 +1,6 @@
 import UpdateScheduler from '../react/update_scheduler';
 import TinyReact from '../react/types';
-import Fiber, { createFiberTree, processEffects } from '../react/fiber';
+import Fiber, { createFiberTree, commitEffects } from '../react/fiber';
 import { camelCase2KebabCase } from '../shared/utils';
 
 export const render = (
@@ -12,40 +12,64 @@ export const render = (
 
   // This callback will be invoke whenever a element in
   // the tree invoke setState
-  UpdateScheduler.registerCallback(
-    fiberTree.processRenderPhase.bind(fiberTree),
-  );
+  UpdateScheduler.registerCallback(fiberTree.processUpdate.bind(fiberTree));
 
-  const domTree = createDOMFromFiber(fiberTree, fiberTree);
+  const domTree = createDOMFromFiberRecursively(fiberTree, fiberTree);
   console.log(`domTree`, domTree);
 
   if (domTree) {
     if (typeof domTree === 'string') rootContainer.innerText = domTree;
     rootContainer.append(domTree);
 
-    processEffects(fiberTree);
+    commitEffects(fiberTree, 'postMutation');
   }
 };
 
-const createDOMFromFiber = (fiber: Fiber, root: Fiber): HTMLElement | null => {
+const createDOMFromFiberRecursively = (
+  fiber: Fiber,
+  root: Fiber,
+): HTMLElement | Text | null => {
   // This fiber node represents a class (function) component
   // We can safely skip this node since they do not emit DOM node
   // And we can assume they only have one children (React requires this) so just move one to its child
   if (typeof fiber.elementType === 'function') {
     const subFiberTree = fiber.child
-      ? createDOMFromFiber(fiber.child, root)
+      ? createDOMFromFiberRecursively(fiber.child, root)
       : null;
 
     // Mark current fiber node with necessary effect
-    fiber.effectTag = 'lifecycle:insert';
-    root.insertNextEffect(fiber);
+    fiber.markEffectTag('lifecycle:insert');
+    root.appendNextEffect(fiber);
 
     return subFiberTree;
   }
 
+  let domElement = createDOMFromFiber(fiber);
+
+  if (fiber.child) {
+    // Create its children
+    let currentChildren: Fiber | undefined = fiber.child;
+    while (currentChildren) {
+      const result = createDOMFromFiberRecursively(currentChildren, root);
+      if (result) domElement.appendChild(result);
+
+      currentChildren = currentChildren.sibling;
+    }
+  }
+
+  // Store the actual html element so we can perform update later
+  fiber.stateNode = domElement;
+
+  return domElement;
+};
+
+export const createDOMFromFiber = (fiber: Fiber) => {
+  if (fiber.elementType === null) {
+    return document.createTextNode(fiber.textContent!);
+  }
+
   // Create the DOM element
-  // @ts-ignore
-  let domElement = document.createElement(fiber.elementType);
+  let domElement = document.createElement(fiber.elementType as string);
 
   // Populate its attributes through props
   for (let key in fiber.pendingProps) {
@@ -55,26 +79,13 @@ const createDOMFromFiber = (fiber: Fiber, root: Fiber): HTMLElement | null => {
     domElement.setAttribute(normalizeAttributeKey(key), value);
   }
 
-  if (fiber.child) {
-    // Create its children
-    let currentChildren: Fiber | undefined = fiber.child;
-    while (currentChildren) {
-      const result = createDOMFromFiber(currentChildren, root);
-      if (result) domElement.appendChild(result);
-
-      currentChildren = currentChildren.sibling;
-    }
-  } else if (
+  if (
     fiber.pendingProps?.children?.length === 1 &&
     typeof fiber.pendingProps?.children[0] === 'string'
   ) {
-    // Create its text node
     const textNode = document.createTextNode(fiber.pendingProps.children[0]);
     domElement.appendChild(textNode);
   }
-
-  // Store the actual html element so we can perform update later
-  fiber.stateNode = domElement;
 
   return domElement;
 };

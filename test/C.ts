@@ -7,8 +7,8 @@ export class C extends TinyReact.Component {
 
   render() {
     // <span id='componentA'>This is class component C</span>
-    return TinyReact.createElement('p', { id: 'componentC' }, [
-      TinyReact.createElement('span', {}, this.props.children),
+    return TinyReact.createElement('p', { id: 'C' }, [
+      TinyReact.createElement('span', { id: 'C-1' }, this.props.children),
     ]);
   }
 }
