@@ -1,6 +1,7 @@
 import Fiber, { createFiberFromElement, createFiberFromString } from './fiber';
 import TinyReact from './types';
 import Logger from '../shared/logger';
+import { pick } from 'lodash';
 
 let workInProgressRoot: Fiber | null = null;
 
@@ -95,7 +96,6 @@ const hasWorkToDo = (fiber: Fiber) => {
 // - render
 const doWork = (fiber: Fiber) => {
   fiber.flushUpdateQueue();
-  // markEffectTag(fiber);
 
   // Create children fibers for this fiber
   const children = fiber.childrenRenderer();
@@ -154,9 +154,6 @@ const markEffectTag = (fiber: Fiber, type?: 'insert' | 'delete') => {
   const elementType = fiber.elementType;
   fiber.markEffectTag(`dom:${operationType}` as TinyReact.EffectTag);
   if (typeof elementType === 'function') {
-    Logger.warning('LOOK AT ME');
-    Logger.log(fiber, operationType);
-
     fiber.markEffectTag(`lifecycle:${operationType}` as TinyReact.EffectTag);
   }
 };
@@ -269,10 +266,17 @@ const createWorkInProgressChildren = (
       continue;
     }
 
-    // We're in first type
-    const childFiber = createFiberForChildren(child);
+    // We're in first type. It's an update, we should clone the fiber
+    // But we should update the children renderer
+    let childFiber = currentChild.cloneFiber();
+    Object.assign(
+      childFiber,
+      pick(createFiberForChildren(child), ['childrenRenderer']),
+    );
+    childFiber.pendingProps = typeof child === 'string' ? {} : child.props;
 
     // Set up necessaray pointers
+    childFiber.return = fiber;
     currentChild.alternate = childFiber;
     childFiber.alternate = currentChild;
     markEffectTag(childFiber);

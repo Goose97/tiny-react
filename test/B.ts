@@ -25,11 +25,21 @@ export class B extends TinyReact.Component {
     const { count } = this.state;
 
     let children = [
-      TinyReact.createElement('p', { id: 'B-1' }, [
-        TinyReact.createElement('span', { id: 'B-1-1' }, [
-          `This is current count: ${this.state!.count}`,
-        ]),
-      ]),
+      TinyReact.createElement(
+        'p',
+        { id: 'B-1', content: count === 1 ? 'first-render' : 'second-render' },
+        [
+          TinyReact.createElement(
+            'span',
+            {
+              id: 'B-1-1',
+              content: count === 1 ? 'first-render' : 'second-render',
+            },
+            [`This is current count: ${this.state!.count}`],
+          ),
+          `This is also current count: ${this.state!.count}`,
+        ],
+      ),
 
       'This is just text',
     ];

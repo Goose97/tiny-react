@@ -2,7 +2,11 @@ import { cloneDeep, omit } from 'lodash';
 
 import ClassComponent from './component';
 import { createWorkInProgressTree } from './reconciler';
-import { createDOMFromFiber } from '../react-dom';
+import {
+  createDOMFromFiber,
+  normalizeAttributeKey,
+  isSingleTextChild,
+} from '../react-dom';
 import UpdateScheduler from './update_scheduler';
 import TinyReact from './types';
 import { getComponentType } from '../shared/utils';
@@ -156,6 +160,7 @@ class Fiber {
       'nextEffect',
       'alternate',
       'output',
+      'stateNode',
     ];
     let alternateNode = cloneDeep(omit(this, omitFields)) as Fiber;
     alternateNode.effectTag = new Set();
@@ -305,15 +310,14 @@ const commitMutation = (fiber: Fiber) => {
     return commitInsert(fiber);
   }
 
-  if (fiber.effectTag.has('dom:update')) {
-    log('dom:update');
-
-    return;
-  }
-
   if (fiber.effectTag.has('dom:delete')) {
     log('dom:delete');
     return commitDelete(fiber);
+  }
+
+  if (fiber.effectTag.has('dom:update')) {
+    log('dom:update');
+    return commitUpdate(fiber);
   }
 };
 
@@ -324,8 +328,6 @@ const commitInsert = (fiber: Fiber) => {
     while (true) {
       if (!parent) throw new Error('CAN NOT FIND PARENT TO MOUNT');
       if (parent.stateNode instanceof HTMLElement) {
-        Logger.success('FOUND PARENT NODE');
-        Logger.log(parent.stateNode, htmlElement);
         parent.stateNode.appendChild(htmlElement);
         break;
       } else parent = parent.return;
@@ -383,6 +385,27 @@ const commitDelete = (fiber: Fiber) => {
   ) {
     const parentNode = fiber.stateNode.parentNode;
     if (parentNode) parentNode.removeChild(fiber.stateNode);
+  }
+};
+
+const commitUpdate = (fiber: Fiber) => {
+  if (!(fiber.stateNode instanceof HTMLElement)) return;
+
+  // Checking if this fiber needs any update
+  // There are two types of update:
+  // 1 - Property update
+  // 2 - Inner text update
+  for (let [key, value] of Object.entries(fiber.pendingProps)) {
+    if (['children'].includes(key)) continue;
+    const currentValue = fiber.memoizedProps[key];
+    if (currentValue !== value)
+      fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
+  }
+
+  // If the new DOM only contains text, we can safely set the innerText
+  if (isSingleTextChild(fiber)) {
+    // @ts-ignore
+    fiber.stateNode.innerText = fiber.pendingProps.children[0];
   }
 };
 

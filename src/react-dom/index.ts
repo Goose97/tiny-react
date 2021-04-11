@@ -79,10 +79,8 @@ export const createDOMFromFiber = (fiber: Fiber) => {
     domElement.setAttribute(normalizeAttributeKey(key), value);
   }
 
-  if (
-    fiber.pendingProps?.children?.length === 1 &&
-    typeof fiber.pendingProps?.children[0] === 'string'
-  ) {
+  if (isSingleTextChild(fiber)) {
+    // @ts-ignore
     const textNode = document.createTextNode(fiber.pendingProps.children[0]);
     domElement.appendChild(textNode);
   }
@@ -90,7 +88,7 @@ export const createDOMFromFiber = (fiber: Fiber) => {
   return domElement;
 };
 
-const normalizeAttributeKey = (key: string) => {
+export const normalizeAttributeKey = (key: string) => {
   switch (key) {
     case 'className':
       return 'class';
@@ -98,6 +96,13 @@ const normalizeAttributeKey = (key: string) => {
     default:
       return camelCase2KebabCase(key);
   }
+};
+
+export const isSingleTextChild = (fiber: Fiber) => {
+  return (
+    fiber.pendingProps?.children?.length === 1 &&
+    typeof fiber.pendingProps?.children[0] === 'string'
+  );
 };
 
 export default {
