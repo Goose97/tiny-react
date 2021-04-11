@@ -7,13 +7,15 @@ let workInProgressRoot: Fiber | null = null;
 export const createWorkInProgressTree = (currentTree: Fiber) => {
   // First we create the root of the work in progress tree
   // assign it to the alternate field of current tree's root
-  const workInProgressTreeRoot = currentTree.createAlternateNode();
+  const workInProgressTreeRoot = currentTree.cloneFiber();
   workInProgressRoot = workInProgressTreeRoot;
 
-  beginProcessFiber(workInProgressTreeRoot);
+  // beginProcessFiber(workInProgressTreeRoot);
+  workLoop(workInProgressTreeRoot);
 
   console.log(`workInProgressTreeRoot`, workInProgressTreeRoot);
   console.log(`currentTree`, currentTree);
+
   printEffectChain(workInProgressTreeRoot);
 
   workInProgressRoot = null;
@@ -33,10 +35,43 @@ const printEffectChain = (fiber: Fiber) => {
   console.log('Effect chain', result);
 };
 
-const beginProcessFiber = (fiber: Fiber) => {
-  // console.log('Begin processing:', this.memoizedProps.id);
+const workLoop = (fiber: Fiber) => {
+  let currentFiber: Fiber | undefined = fiber;
+
+  while (currentFiber) {
+    if (currentFiber.visited) {
+      const nextFiber = completeWork(currentFiber);
+      currentFiber = nextFiber;
+      continue;
+    } else {
+      Logger.success(`Process fiber: ${currentFiber.debugId()}`);
+      processFiber(currentFiber);
+    }
+
+    if (currentFiber.child) {
+      currentFiber = currentFiber.child;
+      continue;
+    }
+
+    const nextFiber = completeWork(currentFiber);
+    currentFiber = nextFiber;
+  }
+};
+
+const completeWork = (fiber: Fiber) => {
+  Logger.success(`Work complete on fiber: ${fiber.debugId()}`);
+  workInProgressRoot!.appendNextEffect(fiber);
+  fiber.inWork = false;
+  return fiber.sibling || fiber.return;
+};
+
+const processFiber = (fiber: Fiber) => {
+  fiber.visited = true;
+
   if (hasWorkToDo(fiber)) {
-    return beginWorkOnFiber(fiber);
+    fiber.inWork = true;
+    Logger.success(`Work begin on fiber: ${fiber.debugId()}`);
+    doWork(fiber);
   } else {
     // If there's no work to do, simply copy the children from the
     // current tree to the work in progress tree
@@ -45,56 +80,13 @@ const beginProcessFiber = (fiber: Fiber) => {
     // If not then it should be a bug
     let currentTreeNode = fiber.alternate!;
     cloneChildren(currentTreeNode, fiber);
-
-    let workInProgressChild = fiber.child;
-    while (workInProgressChild) {
-      const nextFiber = beginProcessFiber(workInProgressChild);
-      workInProgressChild = nextFiber;
-    }
-
-    // If there is no child left to work on, consider this fiber node as completed
-    return completeProcessFiber(fiber);
   }
 };
 
-const completeProcessFiber = (fiber: Fiber) => {
-  // console.log(`Finish process fiber:`, fiber.debugId());
-  return fiber.sibling;
-};
-
-// Iterate through the children linked list and create an alternate node for each
-const cloneChildren = (source: Fiber, target: Fiber) => {
-  let head = source;
-  let targetHead = target;
-  while (true) {
-    const isParent = source === head;
-    const nextPointer = isParent ? 'child' : 'sibling';
-    let next = source[nextPointer];
-    if (!next) break;
-
-    let alternateNext = next.createAlternateNode();
-    alternateNext.return = targetHead;
-    target[nextPointer] = alternateNext;
-
-    // Advance pointers
-    source = next;
-    target = alternateNext;
-  }
-};
-
-const beginWorkOnFiber = (fiber: Fiber) => {
-  Logger.success(`Work begin on fiber: ${fiber.debugId()}`);
-
-  doWork(fiber);
-
-  let workInProgressChild = fiber.child;
-  while (workInProgressChild) {
-    const nextFiber = beginWorkOnFiber(workInProgressChild);
-    workInProgressChild = nextFiber;
-  }
-
-  // If there is no child left to work on, consider this fiber node as completed
-  return completeWorkOnFiber(fiber);
+const hasWorkToDo = (fiber: Fiber) => {
+  const isParentInWork = !!fiber.return?.inWork;
+  const isCurrentHasWork = fiber.updateQueue.length !== 0;
+  return isParentInWork || isCurrentHasWork;
 };
 
 // In render phase, there are several work to do
@@ -115,6 +107,26 @@ const doWork = (fiber: Fiber) => {
   if (childrenFibers) fiber.child = childrenFibers;
 
   console.log(`childrenFibers`, childrenFibers, fiber.debugId());
+};
+
+// Iterate through the children linked list and create an alternate node for each
+const cloneChildren = (source: Fiber, target: Fiber) => {
+  let head = source;
+  let targetHead = target;
+  while (true) {
+    const isParent = source === head;
+    const nextPointer = isParent ? 'child' : 'sibling';
+    let next = source[nextPointer];
+    if (!next) break;
+
+    let alternateNext = next.cloneFiber();
+    alternateNext.return = targetHead;
+    target[nextPointer] = alternateNext;
+
+    // Advance pointers
+    source = next;
+    target = alternateNext;
+  }
 };
 
 const markEffectTag = (fiber: Fiber, type?: 'insert' | 'delete') => {
@@ -147,16 +159,6 @@ const markEffectTag = (fiber: Fiber, type?: 'insert' | 'delete') => {
 
     fiber.markEffectTag(`lifecycle:${operationType}` as TinyReact.EffectTag);
   }
-};
-
-const completeWorkOnFiber = (fiber: Fiber) => {
-  Logger.warning(`Work completed on fiber: ${fiber.debugId()}`);
-  workInProgressRoot!.appendNextEffect(fiber);
-  return fiber.sibling;
-};
-
-const hasWorkToDo = (fiber: Fiber) => {
-  return fiber.updateQueue.length !== 0;
 };
 
 // Compare the children of current tree with the newly rendered children
@@ -254,7 +256,7 @@ const createWorkInProgressChildren = (
     // We're in second type
     if (encounterUnmatch) {
       // Create a clone fiber and mark them as need delete
-      const childFiber = currentChild.createAlternateNode();
+      const childFiber = currentChild.cloneFiber();
       markEffectTag(childFiber, 'delete');
       childFiber.return = fiber;
       childrenLinkedList = appendSiblingLinkedList(

@@ -41,6 +41,10 @@ class Fiber {
   // This is the html element which a fiber produce when they are rendered to the screen
   output?: HTMLElement | Text;
 
+  // This serves iteration purpose in render phase
+  visited?: boolean;
+  inWork?: boolean;
+
   constructor(element: TinyReact.Element) {
     // This holding the props of react elemment
     this.pendingProps = element.props;
@@ -142,7 +146,7 @@ class Fiber {
   // Current tree and work in progress tree (this tree reflects future changes)
   // Each node in the current tree will hold a reference to the corresponding node in the workInProgressTree
   // through alternate field and vice versa
-  createAlternateNode(): Fiber {
+  cloneFiber(): Fiber {
     const omitFields = [
       'child',
       'return',
