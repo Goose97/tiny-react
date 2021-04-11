@@ -300,9 +300,6 @@ const commitMutation = (fiber: Fiber) => {
     Logger.log('Processing mutation effect', effect, fiber.debugId());
   };
 
-  const { elementType } = fiber;
-  if (typeof elementType === 'function') return;
-
   if (fiber.effectTag.has('dom:insert')) {
     log('dom:insert');
     return commitInsert(fiber);
@@ -316,8 +313,7 @@ const commitMutation = (fiber: Fiber) => {
 
   if (fiber.effectTag.has('dom:delete')) {
     log('dom:delete');
-
-    return;
+    return commitDelete(fiber);
   }
 };
 
@@ -336,19 +332,20 @@ const commitInsert = (fiber: Fiber) => {
     }
   };
 
-  // First check create the HTML element
-  if (fiber.debugId() === 'C-1') {
-    Logger.warning('LOOK AT ME');
-    Logger.log(fiber);
+  // If this fiber is the component type, it does not emit any HTML
+  // Just take the output of your child (these components are guarantee to have only one child)
+  if (typeof fiber.elementType === 'function') {
+    fiber.output = fiber.child?.output;
+    return;
   }
 
+  // First create the HTML element
   let htmlElement = createDOMFromFiber(fiber);
 
   // Append all of your children
   let currentChild = fiber.child;
   while (currentChild) {
-    if (currentChild.output)
-      htmlElement.appendChild(currentChild.output);
+    if (currentChild.output) htmlElement.appendChild(currentChild.output);
     currentChild = currentChild.sibling;
   }
 
@@ -362,8 +359,30 @@ const commitInsert = (fiber: Fiber) => {
     !parentEffectTag?.has('lifecycle:insert') &&
     !parentEffectTag?.has('dom:insert')
   ) {
-    Logger.log('HEHE', fiber.return?.stateNode);
     mountToParent(htmlElement);
+  }
+};
+
+const commitDelete = (fiber: Fiber) => {
+  // We should handle delete in a different manner
+  // In case the parent of this fiber is also about to be deleted, delete the
+  // parent is suffice (minimize the amount of DOM operations)
+  const parentEffectTag = fiber.return?.effectTag;
+  if (
+    parentEffectTag?.has('lifecycle:delete') ||
+    parentEffectTag?.has('dom:delete')
+  ) {
+    Logger.warning('RETURN BECAUSE PARENT SHOULD BE DELETE');
+    Logger.log(fiber.debugId());
+    return;
+  }
+
+  if (
+    fiber.stateNode instanceof HTMLElement ||
+    fiber.stateNode instanceof Text
+  ) {
+    const parentNode = fiber.stateNode.parentNode;
+    if (parentNode) parentNode.removeChild(fiber.stateNode);
   }
 };
 

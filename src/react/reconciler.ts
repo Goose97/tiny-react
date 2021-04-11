@@ -95,7 +95,7 @@ const hasWorkToDo = (fiber: Fiber) => {
 // - render
 const doWork = (fiber: Fiber) => {
   fiber.flushUpdateQueue();
-  markEffectTag(fiber);
+  // markEffectTag(fiber);
 
   // Create children fibers for this fiber
   const children = fiber.childrenRenderer();
@@ -205,6 +205,7 @@ const createWorkInProgressChildren = (
     // new fiber which will get insert in the commit phase
     for (let child of children) {
       const childFiber = createFiberForChildren(child);
+      markEffectTag(childFiber, 'insert');
       childrenLinkedList = appendSiblingLinkedList(
         childrenLinkedList,
         childFiber,
