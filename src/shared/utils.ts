@@ -22,3 +22,11 @@ export const camelCase2KebabCase = (string: string) => {
 };
 
 const isUpperCase = (char: string) => char.toLocaleUpperCase() === char;
+
+export const blockFor = (duration: number) => {
+  const deadline = new Date().getTime() + duration
+  while (true) {
+    const current = new Date().getTime()
+    if (current > deadline) break;
+  }
+}

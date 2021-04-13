@@ -132,8 +132,8 @@ class Fiber {
     // First we create the root of the work in progress tree
     // assign it to the alternate field of current tree's root
     // This can be refer as render phase
-    const workInProgressTree = createWorkInProgressTree(this);
-    console.log(`workInProgressTree`, workInProgressTree);
+    const workInProgressTree = await createWorkInProgressTree(this);
+    Logger.log(`workInProgressTree`, workInProgressTree);
 
     // Commit all existing effects on work in progress tree
     // This can refer as commit phase

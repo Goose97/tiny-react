@@ -7,23 +7,23 @@ import {
   normalizeAttributeKey,
   getEventNameFromAttributeName,
 } from '../react-dom';
-import { getComponentType } from '../shared/utils';
+import { getComponentType, blockFor } from '../shared/utils';
 import TinyReact from './types';
 import Logger from '../shared/logger';
 
 let workInProgressRoot: Fiber | null = null;
 
-export const createWorkInProgressTree = (currentTree: Fiber) => {
+export const createWorkInProgressTree = async (currentTree: Fiber) => {
   // First we create the root of the work in progress tree
   // assign it to the alternate field of current tree's root
   const workInProgressTreeRoot = currentTree.cloneFiber();
   workInProgressRoot = workInProgressTreeRoot;
 
   // beginProcessFiber(workInProgressTreeRoot);
-  workLoop(workInProgressTreeRoot);
+  await workLoop(workInProgressTreeRoot);
 
-  console.log(`workInProgressTreeRoot`, workInProgressTreeRoot);
-  console.log(`currentTree`, currentTree);
+  Logger.log(`workInProgressTreeRoot`, workInProgressTreeRoot);
+  Logger.log(`currentTree`, currentTree);
 
   printEffectChain(workInProgressTreeRoot);
 
@@ -41,13 +41,15 @@ const printEffectChain = (fiber: Fiber) => {
     current = current.nextEffect;
   }
 
-  console.log('Effect chain', result);
+  Logger.log('Effect chain', result);
 };
 
-const workLoop = (fiber: Fiber) => {
+const workLoop = async (fiber: Fiber) => {
   let currentFiber: Fiber | undefined = fiber;
 
   while (currentFiber) {
+    await waitTillBrowserIdle();
+
     if (currentFiber.visited) {
       const nextFiber = completeWork(currentFiber);
       currentFiber = nextFiber;
@@ -64,6 +66,18 @@ const workLoop = (fiber: Fiber) => {
 
     const nextFiber = completeWork(currentFiber);
     currentFiber = nextFiber;
+  }
+};
+
+const waitTillBrowserIdle = () => {
+  // @ts-ignore
+  if (typeof window.requestIdleCallback === 'function') {
+    return new Promise(resolve => {
+      // @ts-ignore
+      window.requestIdleCallback(resolve);
+    });
+  } else {
+    return Promise.resolve();
   }
 };
 
@@ -95,13 +109,6 @@ const processFiber = (fiber: Fiber) => {
 const hasWorkToDo = (fiber: Fiber) => {
   const isParentInWork = !!fiber.return?.inWork;
   const isCurrentHasWork = fiber.updateQueue.length !== 0;
-  console.log(`fiber.updateQueue`, fiber.updateQueue);
-  console.log(
-    'isParentInWork',
-    isParentInWork,
-    'isCurrentHasWork',
-    isCurrentHasWork,
-  );
   return isParentInWork || isCurrentHasWork;
 };
 
@@ -110,17 +117,18 @@ const hasWorkToDo = (fiber: Fiber) => {
 // - shouldComponentUpdate
 // - render
 const doWork = (fiber: Fiber) => {
+  blockFor(1000);
   fiber.flushUpdateQueue();
 
   // Create children fibers for this fiber
   const children = fiber.childrenRenderer();
   if (!children) return;
 
-  console.log(`children`, children, fiber.debugId());
+  Logger.log(`children`, children, fiber.debugId());
   const childrenFibers = createWorkInProgressChildren(fiber, children);
   if (childrenFibers) fiber.child = childrenFibers;
 
-  console.log(`childrenFibers`, childrenFibers, fiber.debugId());
+  Logger.log(`childrenFibers`, childrenFibers, fiber.debugId());
 };
 
 // Iterate through the children linked list and create an alternate node for each
@@ -440,7 +448,7 @@ const commitDelete = (fiber: Fiber) => {
 
 const commitUpdate = (fiber: Fiber) => {
   if (!(fiber.stateNode instanceof HTMLElement)) return;
-  
+
   // Checking if this fiber needs any update
   // There are two types of update:
   // 1 - Property update
