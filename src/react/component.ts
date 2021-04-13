@@ -24,7 +24,6 @@ class ClassComponent {
   }
 
   setState(changes: TinyReact.State) {
-    console.log(`changes`, changes);
     if (this._internalFiber) this._internalFiber.enqueueUpdate(changes);
   }
 }

@@ -1,12 +1,7 @@
 import { cloneDeep, omit } from 'lodash';
 
 import ClassComponent from './component';
-import { createWorkInProgressTree } from './reconciler';
-import {
-  createDOMFromFiber,
-  normalizeAttributeKey,
-  isSingleTextChild,
-} from '../react-dom';
+import { createWorkInProgressTree, commitEffects } from './reconciler';
 import UpdateScheduler from './update_scheduler';
 import TinyReact from './types';
 import { getComponentType } from '../shared/utils';
@@ -51,7 +46,7 @@ class Fiber {
 
   constructor(element: TinyReact.Element) {
     // This holding the props of react elemment
-    this.pendingProps = element.props;
+    this.pendingProps = {};
     this.memoizedProps = element.props;
 
     // This holding the state changes which are not yet to be applied
@@ -85,7 +80,7 @@ class Fiber {
     if (this.isClassComponent(element)) {
       //@ts-ignore
       const instance = new element.type();
-      instance.props = this.pendingProps;
+      instance.props = this.memoizedProps;
       instance._internalFiber = this;
       return instance;
     }
@@ -113,7 +108,7 @@ class Fiber {
     if (componentType === 'class') return () => [this.stateNode.render()];
 
     // @ts-ignore
-    return () => [element.type(this.pendingProps)];
+    return () => [element.type(this.memoizedProps)];
   }
 
   appendNextEffect(fiber: Fiber) {
@@ -128,22 +123,26 @@ class Fiber {
   // The strategy is doing depth first search through child link
   // If reach the leaf node, keep processing with sibling link
   // When there is no sibling left, back off with return link
-  // A fiber is consider completed when all of its sub tree is completed
+  // A fiber is consider completed when all of its sub-tree is completed
 
   // In render phase, we will iterate through the whole tree but only work on fibers which
   // are "dirty" (have work to do). When a fiber node is mark "dirty", all of its children will be marked as well
-  processUpdate() {
-    console.log('Begin render phase');
+  async processUpdate() {
+    Logger.success('BEGIN RENDER PROCESS UPDATE');
     // First we create the root of the work in progress tree
     // assign it to the alternate field of current tree's root
     // This can be refer as render phase
     const workInProgressTree = createWorkInProgressTree(this);
+    console.log(`workInProgressTree`, workInProgressTree);
 
     // Commit all existing effects on work in progress tree
     // This can refer as commit phase
-    // commitEffects(workInProgressTree, 'preMutation');
+    commitEffects(workInProgressTree, 'preMutation');
     commitEffects(workInProgressTree, 'mutation');
     commitEffects(workInProgressTree, 'postMutation');
+
+    // Set the work in progress tree as the current tree
+    UpdateScheduler.setCurrentTree(workInProgressTree);
   }
 
   // In render phase, there will be two versions of fiber tree exist
@@ -163,8 +162,12 @@ class Fiber {
       'stateNode',
     ];
     let alternateNode = cloneDeep(omit(this, omitFields)) as Fiber;
-    alternateNode.effectTag = new Set();
 
+    // Reset some fields
+    alternateNode.effectTag = new Set();
+    alternateNode.visited = false;
+
+    // Set up alternate pointer
     alternateNode.alternate = this;
     this.alternate = alternateNode;
 
@@ -180,6 +183,7 @@ class Fiber {
     let batchedUpdate = Object.assign({}, ...this.updateQueue);
     const newState = { ...this.memoizedState, ...batchedUpdate };
     if ('state' in this.stateNode) this.stateNode.state = newState;
+    this.updateQueue = [];
   }
 
   enqueueUpdate(changes: TinyReact.State) {
@@ -199,7 +203,7 @@ class Fiber {
 }
 
 export const createFiberTree = (rootElement: TinyReact.Element): Fiber => {
-  // First we create the fiber node correspond to this element
+  // First we create the correspond fiber node of this element
   const rootFiberNode = createFiberFromElement(rootElement);
 
   // Then we try to create children of this element according to its type:
@@ -212,24 +216,14 @@ export const createFiberTree = (rootElement: TinyReact.Element): Fiber => {
   // Try to create fiber node for each child
   let childrenFiberNodes: Fiber[] = [];
   if (childrenElements) {
-    // If the element contains only one text node, consider it as the textContent of this fiber node
-    // That fiber node does not have any children
-    if (
-      childrenElements.length === 1 &&
-      typeof childrenElements[0] === 'string'
-    ) {
-      childrenFiberNodes = [];
-    } else {
-      childrenFiberNodes = childrenElements
-        .map(element => {
-          if (element === null) return null;
-          if (typeof element === 'string')
-            return createFiberFromString(element);
+    childrenFiberNodes = childrenElements
+      .map(element => {
+        if (element === null) return null;
+        if (typeof element === 'string') return createFiberFromString(element);
 
-          return createFiberTree(element);
-        })
-        .filter((element): element is Fiber => element !== null);
-    }
+        return createFiberTree(element);
+      })
+      .filter((element): element is Fiber => element !== null);
   }
 
   // After we get its children fiber nodes, we try to set up pointer for those children
@@ -268,182 +262,6 @@ const setUpPointersForFiberNodes = (
 
     if (i !== childrenNodes.length - 1)
       childrenNodes[i].sibling = childrenNodes[i + 1];
-  }
-};
-
-export const commitEffects = (
-  fiberRoot: Fiber,
-  type: 'preMutation' | 'mutation' | 'postMutation',
-) => {
-  Logger.success(`BEGIN PROCESSING ${type}`);
-
-  let currentFiber = fiberRoot.rootEffect;
-  let handler;
-  switch (type) {
-    case 'preMutation':
-      handler = commitPreMutationEffect;
-      break;
-    case 'mutation':
-      handler = commitMutation;
-      break;
-    case 'postMutation':
-      handler = commitPostMutationEffect;
-      break;
-  }
-
-  while (currentFiber) {
-    const { nextEffect } = currentFiber;
-    handler(currentFiber);
-    currentFiber = nextEffect;
-  }
-};
-
-const commitPreMutationEffect = (fiber: Fiber) => {};
-
-const commitMutation = (fiber: Fiber) => {
-  const log = (effect: any) => {
-    Logger.log('Processing mutation effect', effect, fiber.debugId());
-  };
-
-  if (fiber.effectTag.has('dom:insert')) {
-    log('dom:insert');
-    return commitInsert(fiber);
-  }
-
-  if (fiber.effectTag.has('dom:delete')) {
-    log('dom:delete');
-    return commitDelete(fiber);
-  }
-
-  if (fiber.effectTag.has('dom:update')) {
-    log('dom:update');
-    return commitUpdate(fiber);
-  }
-};
-
-const commitInsert = (fiber: Fiber) => {
-  const mountToParent = (htmlElement: HTMLElement | Text) => {
-    // Walk up the parent list to find a target DOM node to mount
-    let parent = fiber.return;
-    while (true) {
-      if (!parent) throw new Error('CAN NOT FIND PARENT TO MOUNT');
-      if (parent.stateNode instanceof HTMLElement) {
-        parent.stateNode.appendChild(htmlElement);
-        break;
-      } else parent = parent.return;
-    }
-  };
-
-  // If this fiber is the component type, it does not emit any HTML
-  // Just take the output of your child (these components are guarantee to have only one child)
-  if (typeof fiber.elementType === 'function') {
-    fiber.output = fiber.child?.output;
-    return;
-  }
-
-  // First create the HTML element
-  let htmlElement = createDOMFromFiber(fiber);
-
-  // Append all of your children
-  let currentChild = fiber.child;
-  while (currentChild) {
-    if (currentChild.output) htmlElement.appendChild(currentChild.output);
-    currentChild = currentChild.sibling;
-  }
-
-  // Save the HTML which this fiber emits
-  fiber.output = htmlElement;
-
-  // Check if you parent already mounted on the DOM (there are no effect related to insert)
-  // If so, append yourself to the parent children list
-  const parentEffectTag = fiber.return?.effectTag;
-  if (
-    !parentEffectTag?.has('lifecycle:insert') &&
-    !parentEffectTag?.has('dom:insert')
-  ) {
-    mountToParent(htmlElement);
-  }
-};
-
-const commitDelete = (fiber: Fiber) => {
-  // We should handle delete in a different manner
-  // In case the parent of this fiber is also about to be deleted, delete the
-  // parent is suffice (minimize the amount of DOM operations)
-  const parentEffectTag = fiber.return?.effectTag;
-  if (
-    parentEffectTag?.has('lifecycle:delete') ||
-    parentEffectTag?.has('dom:delete')
-  ) {
-    Logger.warning('RETURN BECAUSE PARENT SHOULD BE DELETE');
-    Logger.log(fiber.debugId());
-    return;
-  }
-
-  if (
-    fiber.stateNode instanceof HTMLElement ||
-    fiber.stateNode instanceof Text
-  ) {
-    const parentNode = fiber.stateNode.parentNode;
-    if (parentNode) parentNode.removeChild(fiber.stateNode);
-  }
-};
-
-const commitUpdate = (fiber: Fiber) => {
-  if (!(fiber.stateNode instanceof HTMLElement)) return;
-
-  // Checking if this fiber needs any update
-  // There are two types of update:
-  // 1 - Property update
-  // 2 - Inner text update
-  for (let [key, value] of Object.entries(fiber.pendingProps)) {
-    if (['children'].includes(key)) continue;
-    const currentValue = fiber.memoizedProps[key];
-    if (currentValue !== value)
-      fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
-  }
-
-  // If the new DOM only contains text, we can safely set the innerText
-  if (isSingleTextChild(fiber)) {
-    // @ts-ignore
-    fiber.stateNode.innerText = fiber.pendingProps.children[0];
-  }
-};
-
-const commitPostMutationEffect = (fiber: Fiber) => {
-  const log = (effect: any) => {
-    Logger.log('Processing post mutation effect', effect, fiber.debugId());
-  };
-
-  if (typeof fiber.elementType === 'string' || fiber.elementType === null)
-    return;
-  const componentType = getComponentType(fiber.elementType as Function);
-  if (componentType === 'function') return;
-  if (!fiber.stateNode) return;
-  const componentInstance = fiber.stateNode as ClassComponent;
-
-  if (fiber.effectTag.has('lifecycle:insert')) {
-    log('lifecycle:insert');
-
-    const handler = componentInstance.componentDidMount;
-    if (typeof handler === 'function') handler.call(componentInstance);
-    return;
-  }
-
-  if (fiber.effectTag.has('lifecycle:update')) {
-    log('lifecycle:update');
-
-    const handler = componentInstance.componentDidUpdate;
-    if (typeof handler === 'function')
-      handler.call(componentInstance, fiber.memoizedProps, fiber.memoizedState);
-    return;
-  }
-
-  if (fiber.effectTag.has('lifecycle:delete')) {
-    log('lifecycle:delete');
-
-    const handler = componentInstance.componentWillUnmount;
-    if (typeof handler === 'function') handler.call(componentInstance);
-    return;
   }
 };
 

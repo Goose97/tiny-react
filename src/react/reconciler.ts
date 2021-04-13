@@ -1,7 +1,11 @@
+import { pick } from 'lodash';
+
+import ClassComponent from './component';
 import Fiber, { createFiberFromElement, createFiberFromString } from './fiber';
+import { createDOMFromFiber, normalizeAttributeKey } from '../react-dom';
+import { getComponentType } from '../shared/utils';
 import TinyReact from './types';
 import Logger from '../shared/logger';
-import { pick } from 'lodash';
 
 let workInProgressRoot: Fiber | null = null;
 
@@ -87,6 +91,13 @@ const processFiber = (fiber: Fiber) => {
 const hasWorkToDo = (fiber: Fiber) => {
   const isParentInWork = !!fiber.return?.inWork;
   const isCurrentHasWork = fiber.updateQueue.length !== 0;
+  console.log(`fiber.updateQueue`, fiber.updateQueue);
+  console.log(
+    'isParentInWork',
+    isParentInWork,
+    'isCurrentHasWork',
+    isCurrentHasWork,
+  );
   return isParentInWork || isCurrentHasWork;
 };
 
@@ -100,7 +111,6 @@ const doWork = (fiber: Fiber) => {
   // Create children fibers for this fiber
   const children = fiber.childrenRenderer();
   if (!children) return;
-  if (children.length === 1 && typeof children[0] === 'string') return;
 
   console.log(`children`, children, fiber.debugId());
   const childrenFibers = createWorkInProgressChildren(fiber, children);
@@ -305,4 +315,183 @@ const appendSiblingLinkedList = (head: Fiber | null, fiber: Fiber) => {
   currentFiber.sibling = fiber;
 
   return head;
+};
+
+export const commitEffects = (
+  fiberRoot: Fiber,
+  type: 'preMutation' | 'mutation' | 'postMutation',
+) => {
+  Logger.success(`BEGIN PROCESSING ${type}`);
+
+  let currentFiber = fiberRoot.rootEffect;
+  let handler;
+  switch (type) {
+    case 'preMutation':
+      handler = commitPreMutationEffect;
+      break;
+    case 'mutation':
+      handler = commitMutation;
+      break;
+    case 'postMutation':
+      handler = commitPostMutationEffect;
+      break;
+  }
+
+  while (currentFiber) {
+    const { nextEffect } = currentFiber;
+    handler(currentFiber);
+    currentFiber = nextEffect;
+  }
+};
+
+const commitPreMutationEffect = (fiber: Fiber) => {};
+
+const commitMutation = (fiber: Fiber) => {
+  const log = (effect: any) => {
+    Logger.log('Processing mutation effect', effect, fiber.debugId());
+  };
+
+  if (fiber.effectTag.has('dom:insert')) {
+    log('dom:insert');
+    return commitInsert(fiber);
+  }
+
+  if (fiber.effectTag.has('dom:delete')) {
+    log('dom:delete');
+    return commitDelete(fiber);
+  }
+
+  if (fiber.effectTag.has('dom:update')) {
+    log('dom:update');
+    return commitUpdate(fiber);
+  }
+};
+
+const commitInsert = (fiber: Fiber) => {
+  const mountToParent = (htmlElement: HTMLElement | Text) => {
+    // Walk up the parent list to find a target DOM node to mount
+    let parent = fiber.return;
+    while (true) {
+      if (!parent) throw new Error('CAN NOT FIND PARENT TO MOUNT');
+      if (parent.stateNode instanceof HTMLElement) {
+        parent.stateNode.appendChild(htmlElement);
+        break;
+      } else parent = parent.return;
+    }
+  };
+
+  // If this fiber is the component type, it does not emit any HTML
+  // Just take the output of your child (these components are guarantee to have only one child)
+  if (typeof fiber.elementType === 'function') {
+    fiber.output = fiber.child?.output;
+    return;
+  }
+
+  // First create the HTML element
+  let htmlElement = createDOMFromFiber(fiber);
+
+  // Append all of your children
+  let currentChild = fiber.child;
+  while (currentChild) {
+    if (currentChild.output) htmlElement.appendChild(currentChild.output);
+    currentChild = currentChild.sibling;
+  }
+
+  // Save the HTML which this fiber emits
+  fiber.output = htmlElement;
+
+  // Check if you parent already mounted on the DOM (there are no effect related to insert)
+  // If so, append yourself to the parent children list
+  const parentEffectTag = fiber.return?.effectTag;
+  if (
+    !parentEffectTag?.has('lifecycle:insert') &&
+    !parentEffectTag?.has('dom:insert')
+  ) {
+    mountToParent(htmlElement);
+  }
+};
+
+const commitDelete = (fiber: Fiber) => {
+  // We should handle delete in a different manner
+  // In case the parent of this fiber is also about to be deleted, delete the
+  // parent is suffice (minimize the amount of DOM operations)
+  const parentEffectTag = fiber.return?.effectTag;
+  if (
+    parentEffectTag?.has('lifecycle:delete') ||
+    parentEffectTag?.has('dom:delete')
+  ) {
+    Logger.warning('RETURN BECAUSE PARENT SHOULD BE DELETE');
+    Logger.log(fiber.debugId());
+    return;
+  }
+
+  if (
+    fiber.stateNode instanceof HTMLElement ||
+    fiber.stateNode instanceof Text
+  ) {
+    const parentNode = fiber.stateNode.parentNode;
+    if (parentNode) parentNode.removeChild(fiber.stateNode);
+  }
+};
+
+const commitUpdate = (fiber: Fiber) => {
+  if (!(fiber.stateNode instanceof HTMLElement)) return;
+
+  // Checking if this fiber needs any update
+  // There are two types of update:
+  // 1 - Property update
+  // 2 - Inner text update
+  for (let [key, value] of Object.entries(fiber.pendingProps)) {
+    if (['children'].includes(key)) continue;
+    const currentValue = fiber.memoizedProps[key];
+    if (currentValue !== value)
+      fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
+  }
+};
+
+const commitPostMutationEffect = (fiber: Fiber) => {
+  const log = (effect: any) => {
+    Logger.log('Processing post mutation effect', effect, fiber.debugId());
+  };
+
+  if (typeof fiber.elementType === 'string' || fiber.elementType === null)
+    return;
+  const componentType = getComponentType(fiber.elementType as Function);
+  if (componentType === 'function') return;
+  if (!fiber.stateNode) return;
+  const componentInstance = fiber.stateNode as ClassComponent;
+
+  if (fiber.effectTag.has('dom:update')) {
+    fiber.memoizedProps = fiber.pendingProps;
+    fiber.pendingProps = {};
+    return;
+  }
+
+  if (fiber.effectTag.has('lifecycle:insert')) {
+    log('lifecycle:insert');
+
+    const handler = componentInstance.componentDidMount;
+    if (typeof handler === 'function') handler.call(componentInstance);
+    return;
+  }
+
+  if (fiber.effectTag.has('lifecycle:update')) {
+    log('lifecycle:update');
+
+    const handler = componentInstance.componentDidUpdate;
+    if (typeof handler === 'function')
+      handler.call(componentInstance, fiber.memoizedProps, fiber.memoizedState);
+
+    fiber.memoizedProps = fiber.pendingProps;
+    fiber.pendingProps = {};
+    return;
+  }
+
+  if (fiber.effectTag.has('lifecycle:delete')) {
+    log('lifecycle:delete');
+
+    const handler = componentInstance.componentWillUnmount;
+    if (typeof handler === 'function') handler.call(componentInstance);
+    return;
+  }
 };

@@ -1,20 +1,26 @@
+import Fiber from './fiber';
+
 const PENDING_TIME = 50;
 
 class UpdateScheduler {
   state: 'idle' | 'pending' | 'processing';
   callback?: Function;
+  currentTree: Fiber | null;
 
   constructor() {
     this.state = 'idle';
+    this.currentTree = null;
+  }
+
+  setCurrentTree(fiber: Fiber) {
+    this.currentTree = fiber;
   }
 
   enqueueUpdate() {
     switch (this.state) {
       case 'idle':
         this.state = 'pending';
-
-        // Batch update
-        if (this.callback) setTimeout(this.callback, PENDING_TIME);
+        setTimeout(this.processUpdate, PENDING_TIME); // Batch update
         break;
 
       case 'pending':
@@ -26,9 +32,11 @@ class UpdateScheduler {
     }
   }
 
-  registerCallback(callback: Function) {
-    this.callback = callback;
-  }
+  processUpdate = async () => {
+    const currentFiberTree = this.currentTree;
+    if (currentFiberTree) await currentFiberTree.processUpdate();
+    this.state = 'idle';
+  };
 }
 
 const singleton = new UpdateScheduler();

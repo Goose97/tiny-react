@@ -1,6 +1,7 @@
 import UpdateScheduler from '../react/update_scheduler';
 import TinyReact from '../react/types';
-import Fiber, { createFiberTree, commitEffects } from '../react/fiber';
+import Fiber, { createFiberTree } from '../react/fiber';
+import { commitEffects } from '../react/reconciler';
 import { camelCase2KebabCase } from '../shared/utils';
 
 export const render = (
@@ -12,7 +13,7 @@ export const render = (
 
   // This callback will be invoke whenever a element in
   // the tree invoke setState
-  UpdateScheduler.registerCallback(fiberTree.processUpdate.bind(fiberTree));
+  UpdateScheduler.setCurrentTree(fiberTree);
 
   const domTree = createDOMFromFiberRecursively(fiberTree, fiberTree);
   console.log(`domTree`, domTree);
@@ -57,35 +58,31 @@ const createDOMFromFiberRecursively = (
     }
   }
 
-  // Store the actual html element so we can perform update later
-  fiber.stateNode = domElement;
-
   return domElement;
 };
 
 export const createDOMFromFiber = (fiber: Fiber) => {
+  let domNode;
+
   if (fiber.elementType === null) {
-    return document.createTextNode(fiber.textContent!);
+    domNode = document.createTextNode(fiber.textContent!);
+  } else {
+    // Create the DOM element
+    domNode = document.createElement(fiber.elementType as string);
+
+    // Populate its attributes through props
+    for (let key in fiber.pendingProps) {
+      if (['children'].includes(key)) continue;
+
+      const value = fiber.pendingProps[key];
+      domNode.setAttribute(normalizeAttributeKey(key), value);
+    }
   }
 
-  // Create the DOM element
-  let domElement = document.createElement(fiber.elementType as string);
+  // Store the actual html element so we can perform update later
+  fiber.stateNode = domNode;
 
-  // Populate its attributes through props
-  for (let key in fiber.pendingProps) {
-    if (['children'].includes(key)) continue;
-
-    const value = fiber.pendingProps[key];
-    domElement.setAttribute(normalizeAttributeKey(key), value);
-  }
-
-  if (isSingleTextChild(fiber)) {
-    // @ts-ignore
-    const textNode = document.createTextNode(fiber.pendingProps.children[0]);
-    domElement.appendChild(textNode);
-  }
-
-  return domElement;
+  return domNode;
 };
 
 export const normalizeAttributeKey = (key: string) => {
@@ -96,13 +93,6 @@ export const normalizeAttributeKey = (key: string) => {
     default:
       return camelCase2KebabCase(key);
   }
-};
-
-export const isSingleTextChild = (fiber: Fiber) => {
-  return (
-    fiber.pendingProps?.children?.length === 1 &&
-    typeof fiber.pendingProps?.children[0] === 'string'
-  );
 };
 
 export default {
