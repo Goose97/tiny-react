@@ -2,7 +2,11 @@ import { pick } from 'lodash';
 
 import ClassComponent from './component';
 import Fiber, { createFiberFromElement, createFiberFromString } from './fiber';
-import { createDOMFromFiber, normalizeAttributeKey } from '../react-dom';
+import {
+  createDOMFromFiber,
+  normalizeAttributeKey,
+  getEventNameFromAttributeName,
+} from '../react-dom';
 import { getComponentType } from '../shared/utils';
 import TinyReact from './types';
 import Logger from '../shared/logger';
@@ -65,7 +69,7 @@ const workLoop = (fiber: Fiber) => {
 
 const completeWork = (fiber: Fiber) => {
   Logger.success(`Work complete on fiber: ${fiber.debugId()}`);
-  workInProgressRoot!.appendNextEffect(fiber);
+  if (fiber.effectTag.size !== 0) workInProgressRoot!.appendNextEffect(fiber);
   fiber.inWork = false;
   return fiber.sibling || fiber.return;
 };
@@ -436,7 +440,7 @@ const commitDelete = (fiber: Fiber) => {
 
 const commitUpdate = (fiber: Fiber) => {
   if (!(fiber.stateNode instanceof HTMLElement)) return;
-
+  
   // Checking if this fiber needs any update
   // There are two types of update:
   // 1 - Property update
@@ -444,8 +448,19 @@ const commitUpdate = (fiber: Fiber) => {
   for (let [key, value] of Object.entries(fiber.pendingProps)) {
     if (['children'].includes(key)) continue;
     const currentValue = fiber.memoizedProps[key];
-    if (currentValue !== value)
+    if (currentValue !== value) {
+      // Detach old event listener and attach new one
+      if (['onClick', 'onChange'].includes(key)) {
+        const eventName = getEventNameFromAttributeName(key);
+        if (eventName) {
+          fiber.stateNode.removeEventListener(eventName, currentValue);
+          fiber.stateNode.addEventListener(eventName, value);
+        }
+        continue;
+      }
+
       fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
+    }
   }
 };
 

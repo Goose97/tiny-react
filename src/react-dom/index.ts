@@ -71,10 +71,15 @@ export const createDOMFromFiber = (fiber: Fiber) => {
     domNode = document.createElement(fiber.elementType as string);
 
     // Populate its attributes through props
-    for (let key in fiber.pendingProps) {
+    for (let key in fiber.memoizedProps) {
+      const value = fiber.memoizedProps[key];
+      if (['onClick', 'onChange'].includes(key)) {
+        attachEventListener(domNode, key, value);
+        continue;
+      }
+
       if (['children'].includes(key)) continue;
 
-      const value = fiber.pendingProps[key];
       domNode.setAttribute(normalizeAttributeKey(key), value);
     }
   }
@@ -83,6 +88,27 @@ export const createDOMFromFiber = (fiber: Fiber) => {
   fiber.stateNode = domNode;
 
   return domNode;
+};
+
+const attachEventListener = (
+  domNode: HTMLElement | Text,
+  attribute: string,
+  handler: any,
+) => {
+  if (typeof handler !== 'function') return;
+  let event = getEventNameFromAttributeName(attribute);
+  if (event) domNode.addEventListener(event, handler);
+};
+
+export const getEventNameFromAttributeName = (attribute: string) => {
+  switch (attribute) {
+    case 'onClick':
+      return 'click';
+    case 'onChange':
+      return 'change';
+    default:
+      return null;
+  }
 };
 
 export const normalizeAttributeKey = (key: string) => {
