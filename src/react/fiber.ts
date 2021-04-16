@@ -18,6 +18,7 @@ class Fiber {
   childrenRenderer: (
     props?: TinyReact.Props,
   ) => TinyReact.ChildrenElements | null;
+  key: string | null;
   element: TinyReact.Element;
   elementType: TinyReact.Element['type'];
 
@@ -26,6 +27,7 @@ class Fiber {
   return?: Fiber;
   child?: Fiber;
   sibling?: Fiber;
+  previousSibling?: Fiber;
 
   effectTag: Set<TinyReact.EffectTag>;
   // These are pointers forming a linked list of fibers represents all the effect that needs to perform
@@ -45,6 +47,9 @@ class Fiber {
   inWork?: boolean;
 
   constructor(element: TinyReact.Element) {
+    // Key of children reconcilation
+    this.key = element.key;
+
     // This holding the props of react elemment
     this.pendingProps = {};
     this.memoizedProps = element.props;
@@ -158,7 +163,6 @@ class Fiber {
       'rootEffect',
       'nextEffect',
       'alternate',
-      'output',
       'stateNode',
     ];
     let alternateNode = cloneDeep(omit(this, omitFields)) as Fiber;
@@ -196,7 +200,8 @@ class Fiber {
   }
 
   debugId() {
-    const id = this.memoizedProps.id || this.textContent;
+    const id =
+      this.pendingProps.id || this.memoizedProps.id || this.textContent;
     if (!id) console.log('Can not get debug ID', this);
     return id;
   }
@@ -260,8 +265,73 @@ const setUpPointersForFiberNodes = (
   for (let i = 0; i < childrenNodes.length; i++) {
     childrenNodes[i].return = parentNode;
 
-    if (i !== childrenNodes.length - 1)
+    if (i !== childrenNodes.length - 1) {
       childrenNodes[i].sibling = childrenNodes[i + 1];
+      childrenNodes[i + 1].previousSibling = childrenNodes[i];
+    }
+  }
+};
+
+// Walk down the child link and find the first fiber which output html
+export const getNearestElementDescendant = (
+  fiber: Fiber,
+): Exclude<Fiber['stateNode'], TinyReact.Component> => {
+  let currentChild = fiber.child;
+  if (isFiberOutputHTMLElement(fiber))
+    return fiber.stateNode as HTMLElement | Text;
+
+  while (currentChild) {
+    if (isFiberOutputHTMLElement(currentChild))
+      return currentChild.stateNode as HTMLElement | Text;
+
+    currentChild = currentChild.child;
+  }
+
+  return null;
+};
+
+export const getNearestElementAncestor = (
+  fiber: Fiber,
+): Exclude<Fiber['stateNode'], TinyReact.Component> => {
+  let currentFiber: Fiber | undefined = fiber.return;
+  while (currentFiber) {
+    if (isFiberOutputHTMLElement(currentFiber))
+      return currentFiber.stateNode as HTMLElement | Text;
+
+    currentFiber = fiber.return;
+  }
+
+  return null;
+};
+
+const isFiberOutputHTMLElement = (fiber: Fiber) => {
+  return typeof fiber.elementType === 'string' || fiber.elementType === null;
+};
+
+// Return true if successfully insert the node
+// Otherwise return false
+export const insertAfterFiber = (
+  htmlElement: HTMLElement | Text,
+  fiber: Fiber,
+) => {
+  const fiberOutput = getNearestElementDescendant(fiber);
+  if (!fiberOutput) return false;
+
+  fiberOutput.parentNode?.insertBefore(htmlElement, fiberOutput.nextSibling);
+  return true;
+};
+
+export const iterateFiber = (
+  fiber: Fiber | undefined,
+  iterationKey: 'sibling' | 'previousSibling' | 'child' | 'return',
+  callback: (child: Fiber) => boolean,
+) => {
+  let currentChild: Fiber | undefined = fiber;
+  while (currentChild) {
+    const isYield = callback(currentChild);
+    if (isYield) break;
+
+    currentChild = currentChild[iterationKey];
   }
 };
 

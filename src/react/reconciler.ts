@@ -1,13 +1,23 @@
 import { pick } from 'lodash';
 
 import ClassComponent from './component';
-import Fiber, { createFiberFromElement, createFiberFromString } from './fiber';
+import Fiber, {
+  createFiberFromElement,
+  createFiberFromString,
+  getNearestElementDescendant,
+  getNearestElementAncestor,
+  insertAfterFiber,
+  iterateFiber,
+} from './fiber';
 import {
   createDOMFromFiber,
   normalizeAttributeKey,
   getEventNameFromAttributeName,
 } from '../react-dom';
-import { getComponentType, blockFor } from '../shared/utils';
+import {
+  getComponentType,
+  longestIncreasingSubsequence,
+} from '../shared/utils';
 import TinyReact from './types';
 import Logger from '../shared/logger';
 
@@ -117,7 +127,6 @@ const hasWorkToDo = (fiber: Fiber) => {
 // - shouldComponentUpdate
 // - render
 const doWork = (fiber: Fiber) => {
-  blockFor(1000);
   fiber.flushUpdateQueue();
 
   // Create children fibers for this fiber
@@ -151,10 +160,11 @@ const cloneChildren = (source: Fiber, target: Fiber) => {
   }
 };
 
-const markEffectTag = (fiber: Fiber, type?: 'insert' | 'delete') => {
+const markEffectTag = (
+  fiber: Fiber,
+  type: 'insert' | 'delete' | 'update' | 'rearrange',
+) => {
   const getType = () => {
-    if (type) return type;
-
     // Inherit some effect tags from parent
     const parentEffectTag = fiber.return!.effectTag;
     if (
@@ -169,7 +179,7 @@ const markEffectTag = (fiber: Fiber, type?: 'insert' | 'delete') => {
     )
       return 'delete';
 
-    return 'update';
+    return type;
   };
 
   const operationType = getType();
@@ -189,21 +199,51 @@ const createWorkInProgressChildren = (
   fiber: Fiber,
   children: TinyReact.ChildrenElements,
 ): Fiber | null => {
-  const isMatchType = (
-    currentTreeChild: Fiber,
-    alternateChild: TinyReact.Element | string | undefined,
+  // Iterate over the current children list to find the match one
+  const findMatchFiber = (
+    currentTreeFiber: Fiber,
+    workInProgressChild: TinyReact.Element | string,
   ) => {
-    if (!alternateChild) return false;
-    if (typeof alternateChild === 'string') {
-      // String child
-      return currentTreeChild
-        ? currentTreeChild.elementType === null &&
-            currentTreeChild.textContent === alternateChild
-        : false;
-    } else {
-      // Element child
-      return alternateChild.type === currentTreeChild?.elementType;
+    let currentChild = currentTreeFiber.child;
+    while (currentChild) {
+      const result = isFiberMatch(currentChild, workInProgressChild);
+      if (result) return currentChild;
+      else currentChild = currentChild.sibling;
     }
+  };
+
+  const isFiberMatch = (
+    fiber: Fiber,
+    childElement: TinyReact.Element | string,
+  ) => {
+    let matchCallback;
+    // In case of a text node
+    if (typeof childElement === 'string') {
+      matchCallback = (childFiber: Fiber) =>
+        childFiber.elementType === null &&
+        childFiber.textContent === childElement;
+    } else {
+      matchCallback = (childFiber: Fiber) => {
+        const isKeyEqual = childElement.key === childFiber.key;
+        const isTypeMatch = childElement.type === childFiber.elementType;
+        return isKeyEqual && isTypeMatch;
+      };
+    }
+
+    return matchCallback(fiber);
+  };
+
+  // A fiber position is consider unchanged when the next sibling stays the same
+  const isRelativePositionUnchange = (
+    currentTreeFiber: Fiber,
+    nextWorkInProgressChild: TinyReact.Element | string | undefined,
+  ) => {
+    const nextSiblingInCurrentTree = currentTreeFiber.sibling;
+
+    // Last child
+    if (!nextWorkInProgressChild) return nextSiblingInCurrentTree === undefined;
+    if (!nextSiblingInCurrentTree) return nextWorkInProgressChild === undefined;
+    return isFiberMatch(nextSiblingInCurrentTree, nextWorkInProgressChild);
   };
 
   const createFiberForChildren = (child: TinyReact.Element | string) => {
@@ -216,8 +256,7 @@ const createWorkInProgressChildren = (
     return childFiber;
   };
 
-  let childrenLinkedList = null;
-
+  let childrenLinkedList: Fiber | null = null;
   const currentTreeFiber = fiber.alternate;
   if (!currentTreeFiber) {
     // No alternate fiber in the current tree means this fiber is
@@ -234,87 +273,282 @@ const createWorkInProgressChildren = (
     return childrenLinkedList;
   }
 
-  // Iterate through children linked list and create alternate node for each child of the
-  // current tree. After this comparison, we will have two types of children
-  // 1: Matched children: these children should be update in the commit phase
-  // 2: Unmatched children in current tree: these children should be delete in the commit phase
-  // 3: Unmatched children in work in progress tree: these children should be insert in the commit phase
-  // Example:
-  // Current tree: 1 -> 2 -> 3 -> 4 -> 5
-  // Work in progress tree: 1 -> 2 -> 3 -> 6 -> 4 -> 5
-  // After compare, we will have three types of children as listed above:
-  // 1: 1 -> 2 -> 3 (update)
-  // 2: 4 -> 5 (delete)
-  // 2: 6 -> 4 -> 5 (insert)
-  let currentChild = currentTreeFiber.child;
-  let encounterUnmatch = false;
-  let index = 0;
-  while (currentChild || index < children.length) {
-    const child = children[index];
+  // There are four type of element in this phase
+  // 1 - Elements exist in both tree --> update
+  // 2 - Elements exist in both tree, but relative position changes --> rearrange
+  // 3 - Elements exist in work in progress tree but not in current tree --> insert
+  // 4 - Elements exist in current tree but not in work in progress tree -> delete
 
-    // We reach the end of current child linked list
-    // No need to compare, just create new fiber for alternate child
-    // We're in third type
-    if (!currentChild) {
-      const childFiber = createFiberForChildren(child);
-      markEffectTag(childFiber, 'insert');
+  // Walk through work in progress list first, match existing fiber in current children list
+  // Store the key list
+  let matchedCurrentFiber: Set<Fiber> = new Set([]);
+
+  // Store which current fiber matches with work in progress fiber
+  let matchedFiberPairs: Map<Fiber, Fiber> = new Map();
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const matchFiberFromCurrentTree = findMatchFiber(currentTreeFiber, child);
+    if (matchFiberFromCurrentTree)
+      matchedCurrentFiber.add(matchFiberFromCurrentTree);
+
+    // We're in third case
+    if (!matchFiberFromCurrentTree) {
+      const newChildFiber = createFiberForChildren(child);
+      markEffectTag(newChildFiber, 'insert');
       childrenLinkedList = appendSiblingLinkedList(
         childrenLinkedList,
-        childFiber,
+        newChildFiber,
       );
-
-      index++;
       continue;
     }
 
-    // Compare with the child from alternate tree
-    const match = isMatchType(currentChild, child);
-    if (!match) encounterUnmatch = true;
-
-    // Once we encounter an unmatched case, its mean the rest of the children of the current tree
-    // should be delete in the commit phase
-    // We're in second type
-    if (encounterUnmatch) {
-      // Create a clone fiber and mark them as need delete
-      const childFiber = currentChild.cloneFiber();
-      markEffectTag(childFiber, 'delete');
-      childFiber.return = fiber;
-      childrenLinkedList = appendSiblingLinkedList(
-        childrenLinkedList,
-        childFiber,
-      );
-
-      currentChild = currentChild.sibling;
-      continue;
-    }
-
-    // We're in first type. It's an update, we should clone the fiber
+    // We're in first and second case. It's an update, we should clone the fiber
     // But we should update the children renderer
-    let childFiber = currentChild.cloneFiber();
+    let newChildFiber = matchFiberFromCurrentTree.cloneFiber();
+    matchedFiberPairs.set(newChildFiber, matchFiberFromCurrentTree);
     Object.assign(
-      childFiber,
+      newChildFiber,
       pick(createFiberForChildren(child), ['childrenRenderer']),
     );
-    childFiber.pendingProps = typeof child === 'string' ? {} : child.props;
+    newChildFiber.pendingProps = typeof child === 'string' ? {} : child.props;
 
     // Set up necessaray pointers
-    childFiber.return = fiber;
-    currentChild.alternate = childFiber;
-    childFiber.alternate = currentChild;
-    markEffectTag(childFiber);
+    newChildFiber.return = fiber;
+    matchFiberFromCurrentTree.alternate = newChildFiber;
+    newChildFiber.alternate = matchFiberFromCurrentTree;
 
     childrenLinkedList = appendSiblingLinkedList(
       childrenLinkedList,
-      childFiber,
+      newChildFiber,
     );
 
-    // Advance pointer and counter
-    currentChild = currentChild.sibling;
-    index++;
+    continue;
   }
+
+  // Then walk through the current list, check if any element does not exist in the work
+  // in progress tree anymore. If so, mark them as need delete
+  iterateFiber(currentTreeFiber.child, 'sibling', child => {
+    if (!matchedCurrentFiber.has(child)) {
+      // We're in fourth type
+      // Create a clone fiber and mark them as need delete
+      const newChildFiber = child.cloneFiber();
+      newChildFiber.return = fiber;
+      markEffectTag(newChildFiber, 'delete');
+      childrenLinkedList = appendSiblingLinkedList(
+        childrenLinkedList,
+        newChildFiber,
+      );
+    }
+
+    return false;
+  });
+
+  if (currentTreeFiber.child && childrenLinkedList)
+    scheduleArrangeForChildren(
+      currentTreeFiber.child,
+      childrenLinkedList,
+      matchedFiberPairs,
+    );
 
   return childrenLinkedList;
 };
+
+// We have a two list of fiber, a current one and a working in progress one
+// Figure out a way to efficiently rearrange the current one to transform it
+const scheduleArrangeForChildren = (
+  currentChildren: Fiber,
+  newChildren: Fiber,
+  matchedFiberPairs: Map<Fiber, Fiber>,
+) => {
+  // List of fibers which relative positions remain the same
+  let unchangedFibers = getLongestUnchangedFiberSequence(
+    currentChildren,
+    newChildren,
+    matchedFiberPairs,
+  );
+
+  iterateFiber(newChildren, 'sibling', child => {
+    const ignoreEffectTag: TinyReact.EffectTag[] = [
+      'dom:insert',
+      'lifecycle:insert',
+      'dom:update',
+      'lifecycle:update',
+    ];
+    if (ignoreEffectTag.some(effect => child.effectTag.has(effect)))
+      return false;
+
+    markEffectTag(child, unchangedFibers.has(child) ? 'update' : 'rearrange');
+    return false;
+  });
+};
+
+const getLongestUnchangedFiberSequence = (
+  currentFiber: Fiber,
+  newFiber: Fiber,
+  matchedFiberPairs: Map<Fiber, Fiber>,
+) => {
+  let fiberIndexMap: Map<Fiber, number> = new Map();
+  let index = 0;
+  iterateFiber(currentFiber, 'sibling', child => {
+    fiberIndexMap.set(child, index);
+    index++;
+    return false;
+  });
+
+  let fiberWithIndex: Array<{ order: number; value: Fiber }> = [];
+  iterateFiber(newFiber, 'sibling', child => {
+    const currentFiberMatchThisChild = matchedFiberPairs.get(child);
+    if (currentFiberMatchThisChild) {
+      const indexInCurrentTree = fiberIndexMap.get(currentFiberMatchThisChild);
+      if (indexInCurrentTree !== undefined)
+        fiberWithIndex.push({
+          order: indexInCurrentTree,
+          value: child,
+        });
+    }
+
+    return false;
+  });
+
+  if (fiberWithIndex.length === 0) return new Set([]);
+
+  const longestUnchangedFiberSequenceIndex = longestIncreasingSubsequence<Fiber>(
+    fiberWithIndex,
+  );
+  return new Set(longestUnchangedFiberSequenceIndex.map(({ value }) => value));
+};
+
+// const createWorkInProgressChildren = (
+//   fiber: Fiber,
+//   children: TinyReact.ChildrenElements,
+// ): Fiber | null => {
+//   const isMatchType = (
+//     currentTreeChild: Fiber,
+//     alternateChild: TinyReact.Element | string | undefined,
+//   ) => {
+//     if (!alternateChild) return false;
+//     if (typeof alternateChild === 'string') {
+//       // String child
+//       return currentTreeChild
+//         ? currentTreeChild.elementType === null &&
+//             currentTreeChild.textContent === alternateChild
+//         : false;
+//     } else {
+//       // Element child
+//       return alternateChild.type === currentTreeChild?.elementType;
+//     }
+//   };
+
+//   const createFiberForChildren = (child: TinyReact.Element | string) => {
+//     const childFiber =
+//       typeof child === 'string'
+//         ? createFiberFromString(child)
+//         : createFiberFromElement(child);
+//     childFiber.return = fiber;
+
+//     return childFiber;
+//   };
+
+//   let childrenLinkedList = null;
+
+//   const currentTreeFiber = fiber.alternate;
+//   if (!currentTreeFiber) {
+//     // No alternate fiber in the current tree means this fiber is
+//     // new fiber which will get insert in the commit phase
+//     for (let child of children) {
+//       const childFiber = createFiberForChildren(child);
+//       markEffectTag(childFiber, 'insert');
+//       childrenLinkedList = appendSiblingLinkedList(
+//         childrenLinkedList,
+//         childFiber,
+//       );
+//     }
+
+//     return childrenLinkedList;
+//   }
+
+//   // Iterate through children linked list and create alternate node for each child of the
+//   // current tree. After this comparison, we will have two types of children
+//   // 1: Matched children: these children should be update in the commit phase
+//   // 2: Unmatched children in current tree: these children should be delete in the commit phase
+//   // 3: Unmatched children in work in progress tree: these children should be insert in the commit phase
+//   // Example:
+//   // Current tree: 1 -> 2 -> 3 -> 4 -> 5
+//   // Work in progress tree: 1 -> 2 -> 3 -> 6 -> 4 -> 5
+//   // After compare, we will have three types of children as listed above:
+//   // 1: 1 -> 2 -> 3 (update)
+//   // 2: 4 -> 5 (delete)
+//   // 2: 6 -> 4 -> 5 (insert)
+//   let currentChild = currentTreeFiber.child;
+//   let encounterUnmatch = false;
+//   let index = 0;
+//   while (currentChild || index < children.length) {
+//     const child = children[index];
+
+//     // We reach the end of current child linked list
+//     // No need to compare, just create new fiber for alternate child
+//     // We're in third type
+//     if (!currentChild) {
+//       const childFiber = createFiberForChildren(child);
+//       markEffectTag(childFiber, 'insert');
+//       childrenLinkedList = appendSiblingLinkedList(
+//         childrenLinkedList,
+//         childFiber,
+//       );
+
+//       index++;
+//       continue;
+//     }
+
+//     // Compare with the child from alternate tree
+//     const match = isMatchType(currentChild, child);
+//     if (!match) encounterUnmatch = true;
+
+//     // Once we encounter an unmatched case, its mean the rest of the children of the current tree
+//     // should be delete in the commit phase
+//     // We're in second type
+//     if (encounterUnmatch) {
+//       // Create a clone fiber and mark them as need delete
+//       const childFiber = currentChild.cloneFiber();
+//       markEffectTag(childFiber, 'delete');
+//       childFiber.return = fiber;
+//       childrenLinkedList = appendSiblingLinkedList(
+//         childrenLinkedList,
+//         childFiber,
+//       );
+
+//       currentChild = currentChild.sibling;
+//       continue;
+//     }
+
+//     // We're in first type. It's an update, we should clone the fiber
+//     // But we should update the children renderer
+//     let childFiber = currentChild.cloneFiber();
+//     Object.assign(
+//       childFiber,
+//       pick(createFiberForChildren(child), ['childrenRenderer']),
+//     );
+//     childFiber.pendingProps = typeof child === 'string' ? {} : child.props;
+
+//     // Set up necessaray pointers
+//     childFiber.return = fiber;
+//     currentChild.alternate = childFiber;
+//     childFiber.alternate = currentChild;
+//     markEffectTag(childFiber);
+
+//     childrenLinkedList = appendSiblingLinkedList(
+//       childrenLinkedList,
+//       childFiber,
+//     );
+
+//     // Advance pointer and counter
+//     currentChild = currentChild.sibling;
+//     index++;
+//   }
+
+//   return childrenLinkedList;
+// };
 
 const appendSiblingLinkedList = (head: Fiber | null, fiber: Fiber) => {
   if (!head) return fiber;
@@ -325,6 +559,7 @@ const appendSiblingLinkedList = (head: Fiber | null, fiber: Fiber) => {
   }
 
   currentFiber.sibling = fiber;
+  fiber.previousSibling = currentFiber;
 
   return head;
 };
@@ -377,18 +612,31 @@ const commitMutation = (fiber: Fiber) => {
     log('dom:update');
     return commitUpdate(fiber);
   }
+
+  if (fiber.effectTag.has('dom:rearrange')) {
+    log('dom:rearrange');
+    commitUpdate(fiber);
+    return commitRearrange(fiber);
+  }
 };
 
 const commitInsert = (fiber: Fiber) => {
   const mountToParent = (htmlElement: HTMLElement | Text) => {
-    // Walk up the parent list to find a target DOM node to mount
-    let parent = fiber.return;
-    while (true) {
-      if (!parent) throw new Error('CAN NOT FIND PARENT TO MOUNT');
-      if (parent.stateNode instanceof HTMLElement) {
-        parent.stateNode.appendChild(htmlElement);
-        break;
-      } else parent = parent.return;
+    let mountSuccess = false;
+
+    iterateFiber(fiber.previousSibling, 'previousSibling', child => {
+      const success = insertAfterFiber(htmlElement, child);
+      if (success) mountSuccess = true;
+      return success;
+    });
+
+    // This is when we can not find any sibling to insert after
+    // Append to the parent
+    if (!mountSuccess) {
+      const parentElement = getNearestElementAncestor(fiber);
+      if (parentElement instanceof HTMLElement) {
+        parentElement.prepend(htmlElement);
+      }
     }
   };
 
@@ -470,6 +718,26 @@ const commitUpdate = (fiber: Fiber) => {
       fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
     }
   }
+};
+
+const commitRearrange = (fiber: Fiber) => {
+  if (
+    !(fiber.stateNode instanceof HTMLElement || fiber.stateNode instanceof Text)
+  )
+    return;
+
+  let currentSibling = fiber.previousSibling;
+  while (currentSibling) {
+    //@ts-ignore
+    const success = insertAfterFiber(fiber.stateNode, currentSibling);
+    if (success) return;
+    currentSibling = currentSibling?.previousSibling;
+  }
+
+  // If can not find a previous sibling to insert, prepend to parent
+  const parentElement = getNearestElementAncestor(fiber);
+  if (parentElement instanceof HTMLElement)
+    parentElement.prepend(fiber.stateNode);
 };
 
 const commitPostMutationEffect = (fiber: Fiber) => {

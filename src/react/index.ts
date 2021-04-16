@@ -8,12 +8,29 @@ export const createElement = (
   props: TinyReact.Props,
   children?: Array<TinyReact.Element | string>,
 ): TinyReact.Element => {
-  if (children) props = { ...props, children };
+  if (children) {
+    props = { ...props, children: ensureChildrenHaveKeys(children) };
+  }
   return {
     type: component,
     props: props,
     key: 'key' in props ? props.key : null,
   };
+};
+
+const ensureChildrenHaveKeys = (
+  children: Array<TinyReact.Element | string>,
+) => {
+  return children.map((child, index) => {
+    if (typeof child === 'string') return child;
+    if ('key' in child.props) return child;
+
+    const defaultKey = index.toString();
+    child.props.key = defaultKey;
+    child.key = defaultKey;
+
+    return child;
+  });
 };
 
 export default {

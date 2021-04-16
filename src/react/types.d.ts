@@ -32,6 +32,7 @@ declare namespace TinyReact {
   export type EffectTag =
     | 'dom:insert'
     | 'dom:update'
+    | 'dom:rearrange'
     | 'dom:delete'
     | 'lifecycle:insert'
     | 'lifecycle:update'

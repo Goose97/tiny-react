@@ -78,7 +78,7 @@ export const createDOMFromFiber = (fiber: Fiber) => {
         continue;
       }
 
-      if (['children'].includes(key)) continue;
+      if (['children', 'key'].includes(key)) continue;
 
       domNode.setAttribute(normalizeAttributeKey(key), value);
     }
