@@ -44,7 +44,7 @@ class Fiber {
 
   // This serves iteration purpose in render phase
   visited?: boolean;
-  inWork?: boolean;
+  recreatingSubtree?: boolean;
 
   constructor(element: TinyReact.Element) {
     // Key of children reconcilation

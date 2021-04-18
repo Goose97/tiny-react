@@ -29,7 +29,6 @@ export const createWorkInProgressTree = async (currentTree: Fiber) => {
   const workInProgressTreeRoot = currentTree.cloneFiber();
   workInProgressRoot = workInProgressTreeRoot;
 
-  // beginProcessFiber(workInProgressTreeRoot);
   await workLoop(workInProgressTreeRoot);
 
   Logger.log(`workInProgressTreeRoot`, workInProgressTreeRoot);
@@ -57,25 +56,30 @@ const printEffectChain = (fiber: Fiber) => {
 const workLoop = async (fiber: Fiber) => {
   let currentFiber: Fiber | undefined = fiber;
 
+  const completeWorkOnCurrentFiber = () => {
+    const nextFiber = completeWork(currentFiber!);
+    currentFiber = nextFiber;
+  };
+
   while (currentFiber) {
-    // await waitTillBrowserIdle();
+    await waitTillBrowserIdle();
 
     if (currentFiber.visited) {
-      const nextFiber = completeWork(currentFiber);
-      currentFiber = nextFiber;
+      completeWorkOnCurrentFiber();
       continue;
-    } else {
-      Logger.success(`Process fiber: ${currentFiber.debugId()}`);
-      processFiber(currentFiber);
     }
 
-    if (currentFiber.child) {
+    Logger.success(`Process fiber: ${currentFiber.debugId()}`);
+    const shouldExitEarly = processFiber(currentFiber);
+    if (shouldExitEarly) {
+      completeWorkOnCurrentFiber();
+      continue;
+    } else if (currentFiber.child) {
       currentFiber = currentFiber.child;
       continue;
+    } else {
+      completeWorkOnCurrentFiber();
     }
-
-    const nextFiber = completeWork(currentFiber);
-    currentFiber = nextFiber;
   }
 };
 
@@ -94,38 +98,74 @@ const waitTillBrowserIdle = () => {
 const completeWork = (fiber: Fiber) => {
   Logger.success(`Work complete on fiber: ${fiber.debugId()}`);
   if (fiber.effectTag.size !== 0) workInProgressRoot!.appendNextEffect(fiber);
-  fiber.inWork = false;
+  fiber.recreatingSubtree = false;
   return fiber.sibling || fiber.return;
 };
 
+// Return boolean indicating should we early exit from this fiber
 const processFiber = (fiber: Fiber) => {
   fiber.visited = true;
+  const handlerTag = getFiberHandlerTag(fiber);
+  switch (handlerTag) {
+    case 'reuseSubtree': {
+      const currentTreeNode = fiber.alternate!;
+      fiber.child = currentTreeNode.child;
+      return true;
+    }
 
-  if (hasWorkToDo(fiber)) {
-    fiber.inWork = true;
-    Logger.success(`Work begin on fiber: ${fiber.debugId()}`);
-    doWork(fiber);
-  } else {
-    // If there's no work to do, simply copy the children from the
-    // current tree to the work in progress tree
-
-    // Each fiber node enter this function is guarantee to have an alternate node point to the current tree
-    // If not then it should be a bug
-    let currentTreeNode = fiber.alternate!;
-    cloneChildren(currentTreeNode, fiber);
-
-    // Iterate to check if any child fiber has work to do
-    iterateFiber(fiber.child, 'sibling', child => {
-      if (hasWorkToDo(child)) markEffectTag(child, 'update');
+    case 'rerenderChildren': {
+      fiber.recreatingSubtree = true;
+      Logger.success(`Work begin on fiber: ${fiber.debugId()}`);
+      doWork(fiber);
       return false;
-    });
+    }
+
+    case 'reuseChildren': {
+      // If there's no pending updates, simply copy the children from the
+      // current tree to the work in progress tree
+
+      // Each fiber node enter this function is guarantee to have an alternate node point to the current tree
+      // If not then it should be a bug
+      const currentTreeNode = fiber.alternate!;
+      cloneChildren(currentTreeNode, fiber);
+
+      // Iterate to check if any child fiber has work to do
+      iterateFiber(fiber.child, 'sibling', child => {
+        if (child.updateQueue.length !== 0) markEffectTag(child, 'update');
+        return false;
+      });
+
+      return false;
+    }
   }
 };
 
-const hasWorkToDo = (fiber: Fiber) => {
-  const isParentInWork = !!fiber.return?.inWork;
-  const isCurrentHasWork = fiber.updateQueue.length !== 0;
-  return isParentInWork || isCurrentHasWork;
+const getFiberHandlerTag = (fiber: Fiber) => {
+  const isParentRecreatingSubtree = !!fiber.return?.recreatingSubtree;
+  const isCurrentHasUpdate = fiber.updateQueue.length !== 0;
+  if (isParentRecreatingSubtree || isCurrentHasUpdate) {
+    const shouldUpdate = evaluateShouldComponentUpdate(fiber);
+    return shouldUpdate ? 'rerenderChildren' : 'reuseSubtree';
+  } else return 'reuseChildren';
+};
+
+const evaluateShouldComponentUpdate = (fiber: Fiber) => {
+  if (typeof fiber.elementType === 'string' || fiber.elementType === null)
+    return true;
+
+  const componentType = getComponentType(fiber.elementType as Function);
+  if (componentType === 'function') return true;
+
+  const instance = fiber.stateNode as ClassComponent;
+  if (typeof instance.shouldComponentUpdate !== 'function') return true;
+
+  const nextState = getNextState(fiber);
+  return instance.shouldComponentUpdate(fiber.pendingProps, nextState);
+};
+
+const getNextState = (fiber: Fiber) => {
+  // @ts-ignore
+  return fiber.stateNode.state;
 };
 
 // In render phase, there are several work to do
