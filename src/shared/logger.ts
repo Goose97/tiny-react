@@ -6,7 +6,7 @@ class Logger {
     // 2 - Warning
     // 3 - Info
     // 4 - Trace
-    this.logLevel = 4;
+    this.logLevel = 0;
   }
 
   success(message: string) {

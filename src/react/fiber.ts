@@ -138,7 +138,6 @@ class Fiber {
     // assign it to the alternate field of current tree's root
     // This can be refer as render phase
     const workInProgressTree = await createWorkInProgressTree(this);
-    Logger.log(`workInProgressTree`, workInProgressTree);
 
     // Commit all existing effects on work in progress tree
     // This can refer as commit phase
@@ -202,7 +201,7 @@ class Fiber {
   debugId() {
     const id =
       this.pendingProps.id || this.memoizedProps.id || this.textContent;
-    if (!id) console.log('Can not get debug ID', this);
+    if (!id) Logger.log('Can not get debug ID', this);
     return id;
   }
 }
@@ -323,7 +322,12 @@ export const insertAfterFiber = (
 
 export const iterateFiber = (
   fiber: Fiber | undefined,
-  iterationKey: 'sibling' | 'previousSibling' | 'child' | 'return',
+  iterationKey:
+    | 'sibling'
+    | 'previousSibling'
+    | 'child'
+    | 'return'
+    | 'nextEffect',
   callback: (child: Fiber) => boolean,
 ) => {
   let currentChild: Fiber | undefined = fiber;

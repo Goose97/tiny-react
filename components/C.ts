@@ -8,10 +8,10 @@ export class C extends TinyReact.Component {
     };
   }
 
-  componentDidMount() {
-    console.log(`im in C ${this.props.id}`);
-    setTimeout(() => this.setState({ content: 'hello again' }), 7000);
-  }
+  // componentDidMount() {
+  //   console.log(`im in C ${this.props.id}`);
+  //   setTimeout(() => this.setState({ content: 'hello again' }), 7000);
+  // }
 
   render() {
     //@ts-ignore

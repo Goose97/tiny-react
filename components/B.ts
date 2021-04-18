@@ -76,7 +76,11 @@ export class B extends TinyReact.Component {
     // if (this.props.id === 1)
     //   children.push(TinyReact.createElement(C, { id: 3 }, ['My C children']));
 
-    return TinyReact.createElement('p', { id: 'B' }, children);
+    return TinyReact.createElement(
+      'p',
+      { id: 'B', onClick: (e: any) => console.log('in clicking', e) },
+      children,
+    );
   }
 }
 

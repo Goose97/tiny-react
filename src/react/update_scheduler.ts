@@ -20,7 +20,8 @@ class UpdateScheduler {
     switch (this.state) {
       case 'idle':
         this.state = 'pending';
-        setTimeout(this.processUpdate, PENDING_TIME); // Batch update
+        // setTimeout(this.processUpdate, PENDING_TIME); // Batch update
+        this.processUpdate();
         break;
 
       case 'pending':
