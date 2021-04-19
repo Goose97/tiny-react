@@ -5,11 +5,11 @@ export class Button extends TinyReact.Component {
     super();
   }
 
-  shouldComponentUpdate(nextProps, nextState) {
-    console.log(`nextProps`, nextProps);
-    console.log(`nextState`, nextState);
-    return false;
-  }
+  // shouldComponentUpdate(nextProps, nextState) {
+  //   console.log(`nextProps`, nextProps);
+  //   console.log(`nextState`, nextState);
+  //   return false;
+  // }
 
   render() {
     const children = this.props.children;

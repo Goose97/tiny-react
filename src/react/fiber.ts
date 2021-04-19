@@ -46,6 +46,9 @@ class Fiber {
   visited?: boolean;
   recreatingSubtree?: boolean;
 
+  // Store the event handler so we can detach them in needs
+  eventListeners: Map<string, Function>;
+
   constructor(element: TinyReact.Element) {
     // Key of children reconcilation
     this.key = element.key;
@@ -79,6 +82,8 @@ class Fiber {
 
     this.textContent = element.textContent;
     this.effectTag = new Set();
+
+    this.eventListeners = new Map();
   }
 
   createStateNode(element: TinyReact.Element): Fiber['stateNode'] {
@@ -163,6 +168,7 @@ class Fiber {
       'nextEffect',
       'alternate',
       'stateNode',
+      'eventListeners',
     ];
     let alternateNode = cloneDeep(omit(this, omitFields)) as Fiber;
 
@@ -174,8 +180,9 @@ class Fiber {
     alternateNode.alternate = this;
     this.alternate = alternateNode;
 
-    // Reuse the class instance
+    // Reuse the class instance and event listeners map
     alternateNode.stateNode = this.stateNode;
+    alternateNode.eventListeners = this.eventListeners;
 
     return alternateNode;
   }
@@ -203,6 +210,15 @@ class Fiber {
       this.pendingProps.id || this.memoizedProps.id || this.textContent;
     if (!id) Logger.log('Can not get debug ID', this);
     return id;
+  }
+
+  saveEventListener(event: string, handler: Function) {
+    this.eventListeners.set(event, handler);
+  }
+
+  flushPendingProps() {
+    this.memoizedProps = this.pendingProps;
+    this.pendingProps = {};
   }
 }
 

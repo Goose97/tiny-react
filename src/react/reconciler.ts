@@ -110,6 +110,11 @@ const processFiber = (fiber: Fiber) => {
     case 'reuseSubtree': {
       const currentTreeNode = fiber.alternate!;
       fiber.child = currentTreeNode.child;
+      iterateFiber(fiber.child, 'sibling', child => {
+        child.return = fiber;
+        return false;
+      });
+
       return true;
     }
 
@@ -608,16 +613,41 @@ const commitUpdate = (fiber: Fiber) => {
       // Detach old event listener and attach new one
       if (['onClick', 'onChange'].includes(key)) {
         const eventName = getEventNameFromAttributeName(key);
-        if (eventName) {
-          fiber.stateNode.removeEventListener(eventName, currentValue);
-          fiber.stateNode.addEventListener(eventName, value);
-        }
+        if (!eventName) continue;
+
+        fiber.stateNode.removeEventListener(eventName, currentValue);
+        fiber.stateNode.addEventListener(eventName, value);
+        fiber.saveEventListener(key, value);
         continue;
       }
 
       fiber.stateNode.setAttribute(normalizeAttributeKey(key), value);
     }
   }
+
+  // Check for keys which has been remove
+  for (let [key, _value] of Object.entries(fiber.memoizedProps)) {
+    if (['children'].includes(key)) continue;
+    if (!(key in fiber.pendingProps)) {
+      // Detach old event listener
+      if (['onClick', 'onChange'].includes(key)) {
+        const eventName = getEventNameFromAttributeName(key);
+        if (!eventName) continue;
+
+        const handler = fiber.eventListeners.get(key);
+        if (!handler) continue;
+
+        // @ts-ignore
+        fiber.stateNode.removeEventListener(eventName, handler);
+        continue;
+      }
+
+      fiber.stateNode.removeAttribute(key);
+    }
+  }
+
+  // After everything is done, flush pendingProps to memoizedProps
+  fiber.flushPendingProps();
 };
 
 const commitRearrange = (fiber: Fiber) => {
@@ -667,8 +697,7 @@ const commitPostMutationEffect = (fiber: Fiber) => {
     if (typeof handler === 'function')
       handler.call(componentInstance, fiber.memoizedProps, fiber.memoizedState);
 
-    fiber.memoizedProps = fiber.pendingProps;
-    fiber.pendingProps = {};
+    fiber.flushPendingProps();
 
     // @ts-ignore
     fiber.stateNode._internalFiber = fiber;

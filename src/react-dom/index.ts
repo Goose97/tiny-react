@@ -75,6 +75,7 @@ export const createDOMFromFiber = (fiber: Fiber) => {
       const value = fiber.memoizedProps[key];
       if (['onClick', 'onChange'].includes(key)) {
         attachEventListener(domNode, key, value);
+        fiber.saveEventListener(key, value);
         continue;
       }
 
