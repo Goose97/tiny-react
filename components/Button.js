@@ -5,13 +5,8 @@ export class Button extends TinyReact.Component {
     super();
   }
 
-  // shouldComponentUpdate(nextProps, nextState) {
-  //   console.log(`nextProps`, nextProps);
-  //   console.log(`nextState`, nextState);
-  //   return false;
-  // }
-
   render() {
+    console.log('im in render button');
     const children = this.props.children;
     return TinyReact.createElement(
       'button',

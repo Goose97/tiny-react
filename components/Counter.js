@@ -7,19 +7,8 @@ export class Counter extends TinyReact.Component {
     this.state = {
       count: 1,
     };
-  }
 
-  handleButtonClick(e) {
-    console.log(`this.state.count`, this.state.count);
-    this.setState({ count: this.state.count + 1 });
-  }
-
-  render() {
-    const defaultProps = {
-      className: 'tiny-react-counter__wrapper',
-      id: 'Counter wrapper',
-    };
-    const button = TinyReact.createElement(
+    this.button = TinyReact.createElement(
       Button,
       {
         className: 'tiny-react-counter__button',
@@ -28,6 +17,20 @@ export class Counter extends TinyReact.Component {
       },
       ['Click me'],
     );
+  }
+
+  handleButtonClick(e) {
+    console.log(`this.state.count`, this.state.count);
+    this.setState({ count: this.state.count + 1 });
+  }
+
+  render() {
+    console.log('im in render counter');
+    const defaultProps = {
+      className: 'tiny-react-counter__wrapper',
+      id: 'Counter wrapper',
+    };
+    const button = this.button;
     const countNumber = TinyReact.createElement(
       'span',
       { className: 'tiny-react-counter__number', id: 'Counter span' },

@@ -150,7 +150,8 @@ const getFiberHandlerTag = (fiber: Fiber) => {
   const isCurrentHasUpdate = fiber.updateQueue.length !== 0;
   if (isParentRecreatingSubtree || isCurrentHasUpdate) {
     const shouldUpdate = evaluateShouldComponentUpdate(fiber);
-    return shouldUpdate ? 'rerenderChildren' : 'reuseSubtree';
+    const sameElement = fiber.alternate?.element === fiber.element;
+    return !shouldUpdate || sameElement ? 'reuseSubtree' : 'rerenderChildren';
   } else return 'reuseChildren';
 };
 
@@ -342,12 +343,12 @@ const createWorkInProgressChildren = (
     }
 
     // We're in first and second case. It's an update, we should clone the fiber
-    // But we should update the children renderer
+    // But we should update the children renderer and element
     let newChildFiber = matchFiberFromCurrentTree.cloneFiber();
     matchedFiberPairs.set(newChildFiber, matchFiberFromCurrentTree);
     Object.assign(
       newChildFiber,
-      pick(createFiberForChildren(child), ['childrenRenderer']),
+      pick(createFiberForChildren(child), ['childrenRenderer', 'element']),
     );
     newChildFiber.pendingProps = typeof child === 'string' ? {} : child.props;
 
